@@ -2,6 +2,7 @@ import os
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
+import torchvision.transforms as T
 
 
 class HelmetDataset(Dataset):
@@ -15,6 +16,12 @@ class HelmetDataset(Dataset):
         self.label_dir = os.path.join(self.root_path, mode, "labels")
 
         self.image_files = [f for f in os.listdir(self.img_dir) if f.lower().endswith(".jpg")]
+
+        self.default_transform = T.Compose([
+            T.Resize((self.image_size, self.image_size)),
+            T.ToTensor()
+        ])
+
 
     def __len__(self):
         return len(self.image_files)
@@ -43,8 +50,12 @@ class HelmetDataset(Dataset):
                         labels.append(class_id)
                         boxes.append(box)
 
-            boxes = torch.as_tensor(boxes, dtype=torch.float32)
-            labels = torch.as_tensor(labels, dtype=torch.int64)
+            if len(boxes) > 0:
+                boxes = torch.as_tensor(boxes, dtype=torch.float32)
+                labels = torch.as_tensor(labels, dtype=torch.int64)
+            else:
+                boxes = torch.empty((0, 4), dtype=torch.float32)
+                labels = torch.empty((0,), dtype=torch.int64)
 
             target = {
                 "boxes": boxes,
@@ -53,7 +64,7 @@ class HelmetDataset(Dataset):
 
             if self.transform:
                 image, target = self.transform(image, target)
+            else:
+                image = self.default_transform(image)
 
             return image, target
-
-
