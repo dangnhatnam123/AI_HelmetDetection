@@ -2,48 +2,43 @@ import torch
 import torch.nn as nn
 
 
-class SimpleObjectDetector(nn.Module):
-    def __init__(self, num_classes=3, image_size=256):
-        super(SimpleObjectDetector, self).__init__()
-        self.num_classes = num_classes
-        self.image_size = image_size
+class HelmetClassifier(nn.Module):
+    def __init__(self, num_classes=2):
+        super(HelmetClassifier, self).__init__()
+        # num_classes=2 vì dataset mới chỉ trả về lớp 0 (Có mũ) và 1 (Không mũ)
 
         self.backbone = nn.Sequential(
+            # Lớp 1: Nhận diện các cạnh và chi tiết nhỏ
             nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),
+            nn.MaxPool2d(2, 2),  # Kích thước giảm còn 32x32
 
+            # Lớp 2: Nhận diện hình khối của mũ bảo hiểm
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),
+            nn.MaxPool2d(2, 2),  # Kích thước giảm còn 16x16
 
+            # Lớp 3: Trích xuất đặc trưng sâu
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2)
+            # Dùng AdaptiveAvgPool để biến mọi Feature Map thành 1x1,
+            # giúp mô hình không bị lỗi khi đổi kích thước ảnh đầu vào.
+            nn.AdaptiveAvgPool2d((1, 1))
         )
 
-        self.feature_size = self.image_size // 8
-        self.flatten_size = 128 * self.feature_size * self.feature_size
-
-        self.fc_intermediate = nn.Sequential(
-            nn.Linear(self.flatten_size, 256),
+        # Đầu ra phân loại (Classifier Head)
+        self.classifier = nn.Sequential(
+            nn.Linear(128, 64),
             nn.ReLU(),
-            nn.Dropout(0.5)
-        )
-
-        self.classifier_head = nn.Linear(256, self.num_classes)
-        self.regressor_head = nn.Sequential(
-            nn.Linear(256, 4),
-            nn.Sigmoid()
+            nn.Dropout(0.5),  # Chống học vẹt (Overfitting)
+            nn.Linear(64, num_classes)
         )
 
     def forward(self, x):
-        features = self.backbone(x)
-        features = features.view(-1, self.flatten_size)
-        shared_features = self.fc_intermediate(features)
-
-        class_logits = self.classifier_head(shared_features)
-        bbox_regression = self.regressor_head(shared_features)
-
-        return class_logits, bbox_regression
-
+        x = self.backbone(x)
+        x = x.view(x.size(0), -1)  # Làm phẳng tensor
+        x = self.classifier(x)
+        return x

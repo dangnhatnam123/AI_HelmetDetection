@@ -1,8 +1,10 @@
 from argparse import ArgumentParser
 
+import dataset
+
 if __name__ == '__main__':
     parser = ArgumentParser()
-    parser.add_argument( "--image-dir",default="./data", required=True, help="Path to the image")
+    parser.add_argument( "--data-dir",default="./data", help="Path to the image")
 
     args = parser.parse_args()
-    print(args.image_dir)
+    dataset.HelmetDataset(args.data_dir)
