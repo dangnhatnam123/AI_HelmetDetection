@@ -6,65 +6,59 @@ import torchvision.transforms as T
 
 
 class HelmetDataset(Dataset):
-    def __init__(self, root_path,image_size = 256 , transform=None, mode="train"):
+    def __init__(self, root_path, image_size=64, mode="train"):
         self.root_path = root_path
-        self.transform = transform
         self.mode = mode
         self.image_size = image_size
 
         self.img_dir = os.path.join(self.root_path, mode, "images")
         self.label_dir = os.path.join(self.root_path, mode, "labels")
 
-        self.image_files = [f for f in os.listdir(self.img_dir) if f.lower().endswith(".jpg")]
+        self.samples = []  # Lưu danh sách: (đường dẫn ảnh, tọa độ cắt, nhãn)
 
-        self.default_transform = T.Compose([
+        # Đọc tất cả file nhãn để tạo danh sách mẫu cắt
+        image_files = [f for f in os.listdir(self.img_dir) if f.lower().endswith(".jpg")]
+
+        for img_f in image_files:
+            base_name = os.path.splitext(img_f)[0]
+            label_p = os.path.join(self.label_dir, base_name + ".txt")
+
+            if os.path.exists(label_p):
+                with open(label_p, "r") as f:
+                    for line in f:
+                        if line.startswith("[source") or not line.strip(): continue
+                        data = line.strip().split()
+                        if len(data) == 5:
+                            class_id = int(data[0])
+                            # Chỉ lấy lớp 1 (Có mũ) và 2 (Không mũ) để phân loại
+                            if class_id in [1, 2]:
+                                # Giảm class_id xuống 0 và 1 để phù hợp CrossEntropy
+                                self.samples.append((img_f, [float(x) for x in data[1:]], class_id - 1))
+
+        self.transform = T.Compose([
             T.Resize((self.image_size, self.image_size)),
-            T.ToTensor()
+            T.ToTensor(),
+            T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
 
-
     def __len__(self):
-        return len(self.image_files)
+        return len(self.samples)
 
     def __getitem__(self, idx):
-        image_name = self.image_files[idx]
-        image_path = os.path.join(self.img_dir, image_name)
-        image = Image.open(image_path).convert("RGB")
+        img_name, box, label = self.samples[idx]
+        img_path = os.path.join(self.img_dir, img_name)
+        image = Image.open(img_path).convert("RGB")
+        w_orig, h_orig = image.size
 
-        base_name = os.path.splitext(image_name)[0]
-        label_path = os.path.join(self.label_dir, base_name + ".txt")
+        # Giải mã tọa độ YOLO (x_c, y_c, w, h) sang pixel để cắt ảnh
+        x_c, y_c, w_b, h_b = box
+        left = (x_c - w_b / 2) * w_orig
+        top = (y_c - h_b / 2) * h_orig
+        right = (x_c + w_b / 2) * w_orig
+        bottom = (y_c + h_b / 2) * h_orig
 
-        boxes = []
-        labels = []
+        # Cắt vùng đối tượng ra khỏi ảnh gốc
+        crop_img = image.crop((left, top, right, bottom))
 
-        if os.path.exists(label_path):
-            with open(label_path, "r") as f:
-                lines = f.readlines()
-                for line in lines:
-                    data = line.strip().split(" ")
-
-                    if len(data) == 5:
-                        class_id = int(data[0])
-                        box = [float(x) for x in data[1:]]
-
-                        labels.append(class_id)
-                        boxes.append(box)
-
-            if len(boxes) > 0:
-                boxes = torch.as_tensor(boxes, dtype=torch.float32)
-                labels = torch.as_tensor(labels, dtype=torch.int64)
-            else:
-                boxes = torch.empty((0, 4), dtype=torch.float32)
-                labels = torch.empty((0,), dtype=torch.int64)
-
-            target = {
-                "boxes": boxes,
-                "labels": labels,
-            }
-
-            if self.transform:
-                image, target = self.transform(image, target)
-            else:
-                image = self.default_transform(image)
-
-            return image, target
+        # Resize và chuyển thành Tensor
+        return self.transform(crop_img), torch.tensor(label, dtype=torch.long)
